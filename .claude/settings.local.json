@@ -4,7 +4,11 @@
       "Bash(source:*)",
       "Bash(pip install:*)",
       "Bash(cat:*)",
-      "Bash(python:*)"
+      "Bash(python:*)",
+      "Bash(git checkout:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(git push:*)"
     ],
     "deny": [],
     "ask": []
