@@ -281,3 +281,7 @@ static/uploads/
 # Testing
 .pytest_cache/
 test_results/
+
+*.csv
+data/
+*.env

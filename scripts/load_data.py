@@ -8,13 +8,25 @@ from dotenv import load_dotenv
 load_dotenv()
 
 def create_database_url():
-    """Create database URL from environment variables or use SQLite as fallback"""
-    db_url = os.getenv('DATABASE_URL')
-    if db_url:
-        return db_url
+    """Create MySQL database URL from environment variables, fallback to SQLite"""
+    mysql_host = os.getenv('MYSQL_HOST', 'localhost')
+    mysql_port = os.getenv('MYSQL_PORT', '3306')
+    mysql_database = os.getenv('MYSQL_DATABASE', 'nuclear_power')
+    mysql_user = os.getenv('MYSQL_USER', 'root')
+    mysql_password = os.getenv('MYSQL_PASSWORD', '')
     
-    # Fallback to SQLite
-    return 'sqlite:///nuclear_plants.db'
+    # Try MySQL first
+    mysql_url = f'mysql+pymysql://{mysql_user}:{mysql_password}@{mysql_host}:{mysql_port}/{mysql_database}?charset=utf8mb4'
+    
+    # Test MySQL connection
+    try:
+        test_engine = create_engine(mysql_url)
+        test_engine.connect().close()
+        return mysql_url
+    except Exception as e:
+        print(f"MySQL connection failed: {e}")
+        print("Falling back to SQLite...")
+        return 'sqlite:///nuclear_plants.db'
 
 def load_csv_data():
     """Load data from CSV files"""
@@ -39,10 +51,15 @@ def main():
     """Main function to load data into database"""
     print("Loading nuclear power plant data...")
     
-    # Create database engine
+    # Create database engine with MySQL-specific configuration
     database_url = create_database_url()
     print(f"Using database: {database_url}")
-    engine = create_engine(database_url)
+    engine = create_engine(
+        database_url,
+        pool_pre_ping=True,
+        pool_recycle=300,
+        echo=False
+    )
     
     try:
         # Load CSV data
@@ -50,15 +67,15 @@ def main():
         
         # Load countries
         print("Loading countries...")
-        countries_df.to_sql('countries', engine, if_exists='replace', index=False)
+        countries_df.to_sql('countries', engine, if_exists='replace', index=False, method='multi')
         
         # Load status types
         print("Loading nuclear power plant status types...")
-        status_df.to_sql('nuclear_power_plant_status_types', engine, if_exists='replace', index=False)
+        status_df.to_sql('nuclear_power_plant_status_types', engine, if_exists='replace', index=False, method='multi')
         
         # Load reactor types
         print("Loading nuclear reactor types...")
-        reactor_types_df.to_sql('nuclear_reactor_types', engine, if_exists='replace', index=False)
+        reactor_types_df.to_sql('nuclear_reactor_types', engine, if_exists='replace', index=False, method='multi')
         
         # Load nuclear power plants
         print("Loading nuclear power plants...")
@@ -71,7 +88,7 @@ def main():
             if col in plants_df.columns:
                 plants_df[col] = pd.to_datetime(plants_df[col], errors='coerce')
         
-        plants_df.to_sql('nuclear_power_plants', engine, if_exists='replace', index=False)
+        plants_df.to_sql('nuclear_power_plants', engine, if_exists='replace', index=False, method='multi')
         
         print(f"Successfully loaded:")
         print(f"- {len(countries_df)} countries")
