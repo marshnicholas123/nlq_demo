@@ -27,18 +27,27 @@ async def simple_text2sql(request: Text2SQLRequest):
     try:
         # Generate SQL
         sql_result = simple_service.generate_sql(request.query)
-        
+
         # Execute if requested
         execution_result = None
+        parsed_response = None
         if request.execute:
             execution_result = simple_service.execute_query(sql_result["sql"])
-        
+
+            # Generate natural language response using parser LLM
+            parsed_response = simple_service.parse_results_to_text(
+                user_query=request.query,
+                sql_query=sql_result["sql"],
+                execution_result=execution_result
+            )
+
         return Text2SQLResponse(
             sql=sql_result["sql"],
             method=sql_result["method"],
-            execution_result=execution_result
+            execution_result=execution_result,
+            parsed_response=parsed_response
         )
-    
+
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

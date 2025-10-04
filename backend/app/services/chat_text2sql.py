@@ -1,6 +1,10 @@
 from typing import List, Dict, Optional
 from datetime import datetime
 from app.services.advanced_text2sql import AdvancedText2SQLService
+from opentelemetry import trace
+
+# Get tracer for custom spans
+tracer = trace.get_tracer(__name__)
 
 class ChatText2SQLService(AdvancedText2SQLService):
     """Extends Advanced with conversation context"""
@@ -11,41 +15,51 @@ class ChatText2SQLService(AdvancedText2SQLService):
         self.chat_sessions = {}
     
     def generate_sql_with_context(
-        self, 
-        user_query: str, 
+        self,
+        user_query: str,
         session_id: str
     ) -> Dict:
         """Generate SQL with conversation context"""
-        
-        # 1. Get or create chat history
-        chat_history = self._get_chat_history(session_id)
-        
-        # 2. Resolve query with history (handle follow-ups)
-        resolved_query = self._resolve_query_with_history(user_query, chat_history)
-        
-        # 3. Retrieve metadata context (BM25)
-        relevant_context = self.retrieve_relevant_context(resolved_query, top_k=5)
-        
-        # 4. Get schema and sample data
-        schema_context = self.get_schema_context()
-        tables_mentioned = self._identify_relevant_tables(resolved_query, relevant_context)
-        sample_data = ""
-        for table in tables_mentioned:
-            sample_data += self.get_sample_data(table, limit=3)
-        
-        # 5. Build metadata context
-        metadata_context = "\n\n".join([
-            f"Context from {doc['table']} - {doc['section']}:\n{doc['content']}"
-            for doc in relevant_context
-        ])
-        
-        # 6. Build conversation context
-        conversation_context = self._build_conversation_context(chat_history)
-        
-        # 7. Enhanced prompt with chat history
-        system_prompt = """You are an expert SQL query generator with conversation memory.
 
-You can handle follow-up questions that reference previous queries. Use the conversation 
+        with tracer.start_as_current_span("chat_text2sql.generate_sql_with_context") as span:
+            span.set_attribute("user_query", user_query)
+            span.set_attribute("session_id", session_id)
+            span.set_attribute("method", "chat")
+
+            # 1. Get or create chat history
+            chat_history = self._get_chat_history(session_id)
+            span.set_attribute("chat_history_length", len(chat_history))
+
+            # 2. Resolve query with history (handle follow-ups)
+            resolved_query = self._resolve_query_with_history(user_query, chat_history)
+            is_followup = resolved_query != user_query
+            span.set_attribute("is_followup_query", is_followup)
+            if is_followup:
+                span.set_attribute("resolved_query", resolved_query)
+
+            # 3. Retrieve metadata context (BM25)
+            relevant_context = self.retrieve_relevant_context(resolved_query, top_k=5)
+
+            # 4. Get schema and sample data
+            schema_context = self.get_schema_context()
+            tables_mentioned = self._identify_relevant_tables(resolved_query, relevant_context)
+            sample_data = ""
+            for table in tables_mentioned:
+                sample_data += self.get_sample_data(table, limit=3)
+
+            # 5. Build metadata context
+            metadata_context = "\n\n".join([
+                f"Context from {doc['table']} - {doc['section']}:\n{doc['content']}"
+                for doc in relevant_context
+            ])
+
+            # 6. Build conversation context
+            conversation_context = self._build_conversation_context(chat_history)
+
+            # 7. Enhanced prompt with chat history
+            system_prompt = """You are an expert SQL query generator with conversation memory.
+
+You can handle follow-up questions that reference previous queries. Use the conversation
 history to understand context and resolve ambiguous references.
 
 Rules:
@@ -56,7 +70,7 @@ Rules:
 5. Use proper JOIN syntax and business rules from context
 6. Apply StatusId = 3 filter for "operational" or "current" queries"""
 
-        user_prompt = f"""Database Schema:
+            user_prompt = f"""Database Schema:
 {schema_context}
 
 {sample_data}
@@ -70,29 +84,31 @@ Current User Question: {user_query}
 
 Generate a SQL query to answer this question."""
 
-        # Call Bedrock
-        sql_query = self.bedrock.invoke_model(
-            prompt=user_prompt,
-            system=system_prompt
-        )
-        
-        sql_query = self._extract_sql(sql_query)
-        
-        # 8. Store in history before executing
-        self._add_to_history(session_id, {
-            "user_query": user_query,
-            "resolved_query": resolved_query,
-            "sql": sql_query,
-            "timestamp": datetime.now().isoformat()
-        })
-        
-        return {
-            "sql": sql_query,
-            "method": "chat",
-            "session_id": session_id,
-            "resolved_query": resolved_query if resolved_query != user_query else None,
-            "context_used": [doc['section'] for doc in relevant_context]
-        }
+            # Call Bedrock (automatically traced)
+            sql_query = self.bedrock.invoke_model(
+                prompt=user_prompt,
+                system=system_prompt
+            )
+
+            sql_query = self._extract_sql(sql_query)
+
+            span.set_attribute("generated_sql", sql_query)
+
+            # 8. Store in history before executing
+            self._add_to_history(session_id, {
+                "user_query": user_query,
+                "resolved_query": resolved_query,
+                "sql": sql_query,
+                "timestamp": datetime.now().isoformat()
+            })
+
+            return {
+                "sql": sql_query,
+                "method": "chat",
+                "session_id": session_id,
+                "resolved_query": resolved_query if resolved_query != user_query else None,
+                "context_used": [doc['section'] for doc in relevant_context]
+            }
     
     def _get_chat_history(self, session_id: str) -> List[Dict]:
         """Retrieve chat history for session"""

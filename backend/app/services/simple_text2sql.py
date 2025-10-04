@@ -3,29 +3,14 @@ import json
 from typing import Dict
 from app.services.bedrock_client import bedrock_client
 from app.database import get_db_connection
-from langchain_aws import ChatBedrock
-from langchain.prompts import ChatPromptTemplate
-from app.config import settings
+from opentelemetry import trace
+
+# Get tracer for custom spans
+tracer = trace.get_tracer(__name__)
 
 class SimpleText2SQLService:
     def __init__(self):
         self.bedrock = bedrock_client
-        # Initialize LangChain ChatBedrock for parser LLM
-        # When using ARN, we need to specify the provider
-        if settings.bedrock_model_id.startswith('arn:'):
-            # Extract provider from ARN (e.g., anthropic from the model ARN)
-            self.parser_llm = ChatBedrock(
-                model_id=settings.bedrock_model_id,
-                region_name=settings.aws_region,
-                model_kwargs={"temperature": 0.3, "max_tokens": 1000},
-                provider="anthropic"  # Required for ARN-based model IDs
-            )
-        else:
-            self.parser_llm = ChatBedrock(
-                model_id=settings.bedrock_model_id,
-                region_name=settings.aws_region,
-                model_kwargs={"temperature": 0.3, "max_tokens": 1000}
-            )
     
     def get_schema_context(self) -> str:
         """Extract database schema information"""
@@ -70,38 +55,45 @@ class SimpleText2SQLService:
     
     def generate_sql(self, user_query: str) -> Dict:
         """Generate SQL from natural language"""
-        
-        schema_context = self.get_schema_context()
-        
-        system_prompt = """You are an expert SQL query generator. Generate valid MySQL queries based on the provided schema and user question.
 
-                        Rules:
-                        1. Return ONLY the SQL query, no explanations
-                        2. Use proper JOIN syntax when accessing related tables
-                        3. Use appropriate WHERE clauses for filtering
-                        4. Limit results to 100 rows by default unless specified
-                        5. Always use table aliases for clarity"""
+        with tracer.start_as_current_span("simple_text2sql.generate_sql") as span:
+            span.set_attribute("user_query", user_query)
+            span.set_attribute("method", "simple")
 
-        user_prompt = f"""Schema:
-                    {schema_context}
+            schema_context = self.get_schema_context()
 
-                    User Question: {user_query}
+            system_prompt = """You are an expert SQL query generator. Generate valid MySQL queries based on the provided schema and user question.
 
-                    Generate a SQL query to answer this question."""
+                            Rules:
+                            1. Return ONLY the SQL query, no explanations
+                            2. Use proper JOIN syntax when accessing related tables
+                            3. Use appropriate WHERE clauses for filtering
+                            4. Limit results to 100 rows by default unless specified
+                            5. Always use table aliases for clarity"""
 
-        # Call Bedrock
-        sql_query = self.bedrock.invoke_model(
-            prompt=user_prompt,
-            system=system_prompt
-        )
-        
-        # Clean up the response
-        sql_query = self._extract_sql(sql_query)
-        
-        return {
-            "sql": sql_query,
-            "method": "simple"
-        }
+            user_prompt = f"""Schema:
+                        {schema_context}
+
+                        User Question: {user_query}
+
+                        Generate a SQL query to answer this question."""
+
+            # Call Bedrock (automatically traced)
+            sql_query = self.bedrock.invoke_model(
+                prompt=user_prompt,
+                system=system_prompt,
+                operation_type="sql_generation"
+            )
+
+            # Clean up the response
+            sql_query = self._extract_sql(sql_query)
+
+            span.set_attribute("generated_sql", sql_query)
+
+            return {
+                "sql": sql_query,
+                "method": "simple"
+            }
     
     def _extract_sql(self, response: str) -> str:
         """Extract SQL from LLM response"""
@@ -114,34 +106,44 @@ class SimpleText2SQLService:
     
     def execute_query(self, sql: str) -> Dict:
         """Execute SQL and return results"""
-        try:
-            conn = get_db_connection()
+        with tracer.start_as_current_span("simple_text2sql.execute_query") as span:
+            span.set_attribute("sql", sql)
 
-            # Handle both SQLite and MySQL connections
-            if hasattr(conn, 'row_factory'):  # SQLite connection
-                conn.row_factory = lambda c, r: dict(zip([col[0] for col in c.description], r))
-                cursor = conn.cursor()
-            else:  # MySQL connection
-                cursor = conn.cursor(dictionary=True)
+            try:
+                conn = get_db_connection()
 
-            cursor.execute(sql)
+                # Handle both SQLite and MySQL connections
+                if hasattr(conn, 'row_factory'):  # SQLite connection
+                    conn.row_factory = lambda c, r: dict(zip([col[0] for col in c.description], r))
+                    cursor = conn.cursor()
+                else:  # MySQL connection
+                    cursor = conn.cursor(dictionary=True)
 
-            # Fetch results
-            results = cursor.fetchall()
+                cursor.execute(sql)
 
-            cursor.close()
-            conn.close()
+                # Fetch results
+                results = cursor.fetchall()
 
-            return {
-                "success": True,
-                "data": results,
-                "row_count": len(results)
-            }
-        except Exception as e:
-            return {
-                "success": False,
-                "error": str(e)
-            }
+                cursor.close()
+                conn.close()
+
+                span.set_attribute("row_count", len(results))
+                span.set_attribute("success", True)
+
+                return {
+                    "success": True,
+                    "data": results,
+                    "row_count": len(results)
+                }
+            except Exception as e:
+                span.record_exception(e)
+                span.set_attribute("error", True)
+                span.set_attribute("error_message", str(e))
+
+                return {
+                    "success": False,
+                    "error": str(e)
+                }
 
     def parse_results_to_text(
         self,
@@ -150,7 +152,7 @@ class SimpleText2SQLService:
         execution_result: Dict
     ) -> str:
         """
-        Parse SQL execution results into natural language response using LangChain
+        Parse SQL execution results into natural language response
 
         Args:
             user_query: Original user question in natural language
@@ -160,34 +162,38 @@ class SimpleText2SQLService:
         Returns:
             Natural language response answering the user's question
         """
-        try:
-            # Handle error cases
-            if not execution_result.get("success"):
-                error_msg = execution_result.get("error", "Unknown error")
-                return f"I encountered an error while executing the query: {error_msg}. Please check the database connection and query syntax."
+        # BedrockInstrumentor will automatically trace this LLM call
+        with tracer.start_as_current_span("simple_text2sql.parse_results") as span:
+            span.set_attribute("user_query", user_query)
+            span.set_attribute("sql_query", sql_query)
 
-            # Format results for the prompt
-            data = execution_result.get("data", [])
-            row_count = execution_result.get("row_count", 0)
+            try:
+                # Handle error cases
+                if not execution_result.get("success"):
+                    error_msg = execution_result.get("error", "Unknown error")
+                    span.set_attribute("error", True)
+                    return f"I encountered an error while executing the query: {error_msg}. Please check the database connection and query syntax."
 
-            # Truncate large result sets
-            max_rows = 100
-            truncated = False
-            if len(data) > max_rows:
-                data = data[:max_rows]
-                truncated = True
+                # Format results for the prompt
+                data = execution_result.get("data", [])
+                row_count = execution_result.get("row_count", 0)
+                span.set_attribute("result_row_count", row_count)
 
-            # Format results as readable text
-            if row_count == 0:
-                formatted_results = "No results found."
-            else:
-                # Escape curly braces in JSON to avoid template variable issues
-                formatted_results = json.dumps(data, indent=2, default=str)
-                # Double curly braces to escape them in f-strings
-                formatted_results = formatted_results.replace('{', '{{').replace('}', '}}')
+                # Truncate large result sets
+                max_rows = 100
+                truncated = False
+                if len(data) > max_rows:
+                    data = data[:max_rows]
+                    truncated = True
 
-            # Create prompt template
-            system_prompt = """You are a helpful data analyst assistant. Your job is to analyze SQL query results and provide clear, concise answers to user questions in natural language.
+                # Format results as readable text
+                if row_count == 0:
+                    formatted_results = "No results found."
+                else:
+                    formatted_results = json.dumps(data, indent=2, default=str)
+
+                # Create prompt
+                system_prompt = """You are a helpful data analyst assistant. Your job is to analyze SQL query results and provide clear, concise answers to user questions in natural language.
 
 Rules:
 1. Provide direct answers based on the data shown
@@ -197,7 +203,7 @@ Rules:
 5. Keep responses concise but informative
 6. Do not make assumptions beyond what the data shows"""
 
-            user_prompt = f"""User Question: {user_query}
+                user_prompt = f"""User Question: {user_query}
 
 SQL Query Executed:
 {sql_query}
@@ -209,23 +215,20 @@ Query Results ({row_count} row{'s' if row_count != 1 else ''}):
 
 Please provide a natural language answer to the user's question based on these results."""
 
-            # Create chat prompt template - use static messages since we've already formatted the prompt
-            prompt = ChatPromptTemplate.from_messages([
-                ("system", "{system_msg}"),
-                ("human", "{user_msg}")
-            ])
+                # Generate response using Bedrock (automatically traced)
+                response_text = self.bedrock.invoke_model(
+                    prompt=user_prompt,
+                    system=system_prompt,
+                    max_tokens=1000,
+                    operation_type="response_generation"
+                )
 
-            # Generate response using LangChain
-            chain = prompt | self.parser_llm
-            response = chain.invoke({"system_msg": system_prompt, "user_msg": user_prompt})
+                span.set_attribute("response_length", len(response_text))
+                return response_text
 
-            # Extract text from response
-            if hasattr(response, 'content'):
-                return response.content
-            else:
-                return str(response)
-
-        except Exception as e:
-            # Return None if parser LLM fails, don't block the request
-            print(f"Error in parse_results_to_text: {str(e)}")
-            return None
+            except Exception as e:
+                # Return None if parser LLM fails, don't block the request
+                span.record_exception(e)
+                span.set_attribute("error", True)
+                print(f"Error in parse_results_to_text: {str(e)}")
+                return None

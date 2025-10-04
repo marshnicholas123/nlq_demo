@@ -8,7 +8,11 @@
       "Bash(git checkout:*)",
       "Bash(git add:*)",
       "Bash(git commit:*)",
-      "Bash(git push:*)"
+      "Bash(git push:*)",
+      "WebFetch(domain:arize.com)",
+      "WebSearch",
+      "Bash(curl https://bootstrap.pypa.io/get-pip.py -o get-pip.py)",
+      "Bash(curl -s http://127.0.0.1:6006/healthz)"
     ],
     "deny": [],
     "ask": []

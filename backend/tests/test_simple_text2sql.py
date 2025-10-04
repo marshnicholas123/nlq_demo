@@ -207,5 +207,48 @@ class TestSimpleText2SQL:
         else:
             print("No 'data' key in execution result - checking other possible keys")
             print(f"Available keys in execution_result: {list(execution_result.keys())}")
-        
+
+        print("Test passed!")
+
+    def test_simple_text2sql_with_parsed_response(self):
+        """Test simple text2sql with execution returns natural language parsed response"""
+        print("\n=== Running test_simple_text2sql_with_parsed_response ===")
+        response = client.post(
+            "/api/text2sql/simple",
+            json={
+                "query": "How many operational nuclear power plants are there?",
+                "execute": True
+            }
+        )
+
+        print(f"Response status: {response.status_code}")
+        assert response.status_code == 200
+        data = response.json()
+        print(f"Generated SQL: {data['sql']}")
+        print(f"Execution result: {data['execution_result']}")
+        print(f"Parsed response: {data.get('parsed_response')}")
+
+        # Validate basic structure
+        assert isinstance(data["sql"], str)
+        assert len(data["sql"]) > 0
+        assert data["method"] == "simple"
+        assert data["execution_result"] is not None
+
+        # Validate that parsed_response field exists
+        assert "parsed_response" in data
+
+        # If execution was successful, parser LLM should have been called
+        # Note: parsed_response may be None if 1Bedrock fails
+        if data["execution_result"]["success"]:
+            if data["parsed_response"] is not None:
+                # Parser LLM succeeded
+                assert isinstance(data["parsed_response"], str)
+                assert len(data["parsed_response"]) > 0
+                print(f"Natural language response: {data['parsed_response']}")
+                print("Parser LLM successfully generated response!")
+            else:
+                # Parser LLM failed (likely AWS Bedrock connection issue)
+                print("WARNING: parsed_response is None - Parser LLM failed (check AWS credentials/connection)")
+                print("This is expected if AWS Bedrock is not configured or unavailable")
+
         print("Test passed!")

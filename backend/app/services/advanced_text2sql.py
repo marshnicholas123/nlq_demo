@@ -4,6 +4,10 @@ from typing import List, Dict
 from app.services.simple_text2sql import SimpleText2SQLService
 from app.services.bedrock_client import bedrock_client
 from app.database import get_db_connection
+from opentelemetry import trace
+
+# Get tracer for custom spans
+tracer = trace.get_tracer(__name__)
 
 class AdvancedText2SQLService(SimpleText2SQLService):
     def __init__(self):
@@ -117,62 +121,83 @@ class AdvancedText2SQLService(SimpleText2SQLService):
     
     def retrieve_relevant_context(self, query: str, top_k: int = 5) -> List[Dict]:
         """Use BM25 to retrieve relevant metadata sections"""
-        tokenized_query = query.lower().split()
-        scores = self.bm25.get_scores(tokenized_query)
-        
-        # Get top-k results
-        top_indices = sorted(range(len(scores)), key=lambda i: scores[i], reverse=True)[:top_k]
-        
-        relevant_docs = [self.metadata_docs[i] for i in top_indices if scores[i] > 0]
-        
-        return relevant_docs
+        with tracer.start_as_current_span("advanced_text2sql.bm25_retrieval") as span:
+            span.set_attribute("query", query)
+            span.set_attribute("top_k", top_k)
+
+            tokenized_query = query.lower().split()
+            scores = self.bm25.get_scores(tokenized_query)
+
+            # Get top-k results
+            top_indices = sorted(range(len(scores)), key=lambda i: scores[i], reverse=True)[:top_k]
+
+            relevant_docs = [self.metadata_docs[i] for i in top_indices if scores[i] > 0]
+
+            span.set_attribute("retrieved_docs_count", len(relevant_docs))
+            span.set_attribute("retrieved_sections", [doc['section'] for doc in relevant_docs])
+
+            return relevant_docs
     
     def get_sample_data(self, table_name: str, limit: int = 5) -> str:
         """Get sample rows from table"""
-        try:
-            conn = get_db_connection()
-            cursor = conn.cursor(dictionary=True)
-            cursor.execute(f"SELECT * FROM {table_name} LIMIT {limit}")
-            results = cursor.fetchall()
-            
-            if not results:
-                return ""
-            
-            # Format as string
-            sample_str = f"\nSample data from {table_name}:\n"
-            for i, row in enumerate(results, 1):
-                sample_str += f"Row {i}: {row}\n"
-            
-            cursor.close()
-            conn.close()
-            
-            return sample_str
-        except Exception as e:
-            return f"Error fetching sample data: {str(e)}"
+        with tracer.start_as_current_span("advanced_text2sql.get_sample_data") as span:
+            span.set_attribute("table_name", table_name)
+            span.set_attribute("limit", limit)
+
+            try:
+                conn = get_db_connection()
+                cursor = conn.cursor(dictionary=True)
+                cursor.execute(f"SELECT * FROM {table_name} LIMIT {limit}")
+                results = cursor.fetchall()
+
+                if not results:
+                    span.set_attribute("rows_fetched", 0)
+                    return ""
+
+                # Format as string
+                sample_str = f"\nSample data from {table_name}:\n"
+                for i, row in enumerate(results, 1):
+                    sample_str += f"Row {i}: {row}\n"
+
+                cursor.close()
+                conn.close()
+
+                span.set_attribute("rows_fetched", len(results))
+                return sample_str
+            except Exception as e:
+                span.record_exception(e)
+                span.set_attribute("error", True)
+                return f"Error fetching sample data: {str(e)}"
     
     def generate_sql(self, user_query: str) -> Dict:
         """Generate SQL with enhanced context"""
-        
-        # 1. Retrieve relevant metadata using BM25
-        relevant_context = self.retrieve_relevant_context(user_query, top_k=5)
-        
-        # 2. Get schema
-        schema_context = self.get_schema_context()
-        
-        # 3. Get sample data for relevant tables
-        tables_mentioned = self._identify_relevant_tables(user_query, relevant_context)
-        sample_data = ""
-        for table in tables_mentioned:
-            sample_data += self.get_sample_data(table, limit=3)
-        
-        # 4. Build context string from retrieved documents
-        metadata_context = "\n\n".join([
-            f"Context from {doc['table']} - {doc['section']}:\n{doc['content']}"
-            for doc in relevant_context
-        ])
-        
-        # 5. Build enhanced prompt
-        system_prompt = """You are an expert SQL query generator specialized in nuclear power plant databases.
+
+        with tracer.start_as_current_span("advanced_text2sql.generate_sql") as span:
+            span.set_attribute("user_query", user_query)
+            span.set_attribute("method", "advanced")
+
+            # 1. Retrieve relevant metadata using BM25
+            relevant_context = self.retrieve_relevant_context(user_query, top_k=5)
+
+            # 2. Get schema
+            schema_context = self.get_schema_context()
+
+            # 3. Get sample data for relevant tables
+            tables_mentioned = self._identify_relevant_tables(user_query, relevant_context)
+            span.set_attribute("tables_mentioned", tables_mentioned)
+
+            sample_data = ""
+            for table in tables_mentioned:
+                sample_data += self.get_sample_data(table, limit=3)
+
+            # 4. Build context string from retrieved documents
+            metadata_context = "\n\n".join([
+                f"Context from {doc['table']} - {doc['section']}:\n{doc['content']}"
+                for doc in relevant_context
+            ])
+
+            # 5. Build enhanced prompt
+            system_prompt = """You are an expert SQL query generator specialized in nuclear power plant databases.
 
 Generate valid MySQL queries based on the provided schema, sample data, and business context.
 
@@ -185,7 +210,7 @@ Rules:
 6. Filter NULL values when appropriate
 7. Limit results unless asking for aggregates"""
 
-        user_prompt = f"""Database Schema:
+            user_prompt = f"""Database Schema:
 {schema_context}
 
 {sample_data}
@@ -197,19 +222,22 @@ User Question: {user_query}
 
 Generate a SQL query to answer this question accurately."""
 
-        # Call Bedrock
-        sql_query = self.bedrock.invoke_model(
-            prompt=user_prompt,
-            system=system_prompt
-        )
-        
-        sql_query = self._extract_sql(sql_query)
-        
-        return {
-            "sql": sql_query,
-            "method": "advanced",
-            "context_used": [doc['section'] for doc in relevant_context]
-        }
+            # Call Bedrock (automatically traced)
+            sql_query = self.bedrock.invoke_model(
+                prompt=user_prompt,
+                system=system_prompt
+            )
+
+            sql_query = self._extract_sql(sql_query)
+
+            span.set_attribute("generated_sql", sql_query)
+            span.set_attribute("context_sections_used", [doc['section'] for doc in relevant_context])
+
+            return {
+                "sql": sql_query,
+                "method": "advanced",
+                "context_used": [doc['section'] for doc in relevant_context]
+            }
     
     def _identify_relevant_tables(self, query: str, context: List[Dict]) -> List[str]:
         """Identify which tables are relevant to the query"""

@@ -66,6 +66,7 @@ Required environment variables:
 - Extracts database schema information
 - Uses basic prompt engineering with schema context
 - Direct SQL generation without metadata
+- Uses Bedrock (Claude) for both SQL generation and natural language result parsing
 
 **Usage:**
 ```python

@@ -2,6 +2,10 @@ from typing import List, Dict, Callable
 import json
 from app.services.advanced_text2sql import AdvancedText2SQLService
 from app.services.bedrock_client import bedrock_client
+from opentelemetry import trace
+
+# Get tracer for custom spans
+tracer = trace.get_tracer(__name__)
 
 class Tool:
     """Base tool class"""
@@ -12,19 +16,26 @@ class Tool:
     
     def execute(self, **kwargs) -> Dict:
         """Execute the tool"""
-        try:
-            result = self.function(**kwargs)
-            return {
-                "success": True,
-                "tool": self.name,
-                "result": result
-            }
-        except Exception as e:
-            return {
-                "success": False,
-                "tool": self.name,
-                "error": str(e)
-            }
+        with tracer.start_as_current_span(f"agentic_text2sql.tool.{self.name}") as span:
+            span.set_attribute("tool_name", self.name)
+            span.set_attribute("tool_params", str(kwargs))
+
+            try:
+                result = self.function(**kwargs)
+                span.set_attribute("success", True)
+                return {
+                    "success": True,
+                    "tool": self.name,
+                    "result": result
+                }
+            except Exception as e:
+                span.record_exception(e)
+                span.set_attribute("error", True)
+                return {
+                    "success": False,
+                    "tool": self.name,
+                    "error": str(e)
+                }
 
 class AgenticText2SQLService(AdvancedText2SQLService):
     """Agentic Text2SQL using tools and planning"""
@@ -78,50 +89,66 @@ class AgenticText2SQLService(AdvancedText2SQLService):
     
     def generate_sql_with_agent(self, user_query: str, max_iterations: int = 3) -> Dict:
         """Generate SQL using agentic approach with tools"""
-        
-        agent_state = {
-            "user_query": user_query,
-            "iteration": 0,
-            "schema": None,
-            "sample_data": {},
-            "metadata_context": [],
-            "sql_query": None,
-            "execution_result": None,
-            "validation_result": None,
-            "tool_calls": []
-        }
-        
-        for iteration in range(max_iterations):
-            agent_state["iteration"] = iteration + 1
-            
-            # Plan next action based on current state
-            next_action = self._plan_next_action(agent_state)
-            
-            if next_action["action"] == "execute_tool":
-                # Execute the planned tool
-                tool_result = self._execute_tool(next_action["tool"], next_action["params"])
-                agent_state["tool_calls"].append(tool_result)
-                
-                # Update agent state based on tool result
-                self._update_agent_state(agent_state, tool_result)
-                
-            elif next_action["action"] == "generate_sql":
-                # Generate SQL based on collected context
-                sql_result = self._generate_sql_from_context(agent_state)
-                agent_state["sql_query"] = sql_result["sql"]
-                
-            elif next_action["action"] == "complete":
-                # Agent is satisfied with the result
-                break
-        
-        return {
-            "sql": agent_state["sql_query"],
-            "method": "agentic",
-            "iterations": agent_state["iteration"],
-            "tool_calls": len(agent_state["tool_calls"]),
-            "execution_result": agent_state["execution_result"],
-            "validation_result": agent_state["validation_result"]
-        }
+
+        with tracer.start_as_current_span("agentic_text2sql.generate_sql_with_agent") as span:
+            span.set_attribute("user_query", user_query)
+            span.set_attribute("method", "agentic")
+            span.set_attribute("max_iterations", max_iterations)
+
+            agent_state = {
+                "user_query": user_query,
+                "iteration": 0,
+                "schema": None,
+                "sample_data": {},
+                "metadata_context": [],
+                "sql_query": None,
+                "execution_result": None,
+                "validation_result": None,
+                "tool_calls": []
+            }
+
+            for iteration in range(max_iterations):
+                agent_state["iteration"] = iteration + 1
+
+                with tracer.start_as_current_span(f"agentic_text2sql.iteration_{iteration + 1}") as iter_span:
+                    iter_span.set_attribute("iteration", iteration + 1)
+
+                    # Plan next action based on current state
+                    next_action = self._plan_next_action(agent_state)
+                    iter_span.set_attribute("planned_action", next_action["action"])
+
+                    if next_action["action"] == "execute_tool":
+                        # Execute the planned tool
+                        iter_span.set_attribute("tool_to_execute", next_action["tool"])
+                        tool_result = self._execute_tool(next_action["tool"], next_action["params"])
+                        agent_state["tool_calls"].append(tool_result)
+
+                        # Update agent state based on tool result
+                        self._update_agent_state(agent_state, tool_result)
+
+                    elif next_action["action"] == "generate_sql":
+                        # Generate SQL based on collected context
+                        sql_result = self._generate_sql_from_context(agent_state)
+                        agent_state["sql_query"] = sql_result["sql"]
+                        iter_span.set_attribute("generated_sql", sql_result["sql"])
+
+                    elif next_action["action"] == "complete":
+                        # Agent is satisfied with the result
+                        iter_span.set_attribute("agent_complete", True)
+                        break
+
+            span.set_attribute("total_iterations", agent_state["iteration"])
+            span.set_attribute("total_tool_calls", len(agent_state["tool_calls"]))
+            span.set_attribute("generated_sql", agent_state["sql_query"])
+
+            return {
+                "sql": agent_state["sql_query"],
+                "method": "agentic",
+                "iterations": agent_state["iteration"],
+                "tool_calls": len(agent_state["tool_calls"]),
+                "execution_result": agent_state["execution_result"],
+                "validation_result": agent_state["validation_result"]
+            }
     
     def _plan_next_action(self, state: Dict) -> Dict:
         """Plan the next action based on current agent state"""
