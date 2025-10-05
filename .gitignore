@@ -274,6 +274,9 @@ checkpoints/
 wandb/
 lightning_logs/
 
+# BM25 index files (regenerable from schema)
+backend/app/data/*.pkl
+
 # FastAPI uploads
 uploads/
 static/uploads/

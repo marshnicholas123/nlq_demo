@@ -51,7 +51,7 @@ async def simple_text2sql(request: Text2SQLRequest):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@router.post("/text2sql/advanced", response_model=Text2SQLResponse)
+@router.post("/advanced", response_model=Text2SQLResponse)
 async def advanced_text2sql(request: Text2SQLRequest):
     """
     Convert natural language to SQL using advanced approach with BM25 retrieval
@@ -59,23 +59,32 @@ async def advanced_text2sql(request: Text2SQLRequest):
     try:
         # Generate SQL
         sql_result = advanced_service.generate_sql(request.query)
-        
+
         # Execute if requested
         execution_result = None
+        parsed_response = None
         if request.execute:
             execution_result = advanced_service.execute_query(sql_result["sql"])
-        
+
+            # Generate natural language response using parser LLM
+            parsed_response = advanced_service.parse_results_to_text(
+                user_query=request.query,
+                sql_query=sql_result["sql"],
+                execution_result=execution_result
+            )
+
         return Text2SQLResponse(
             sql=sql_result["sql"],
             method=sql_result["method"],
             context_used=sql_result.get("context_used"),
-            execution_result=execution_result
+            execution_result=execution_result,
+            parsed_response=parsed_response
         )
-    
+
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@router.post("/text2sql/chat", response_model=Text2SQLResponse)
+@router.post("/chat", response_model=Text2SQLResponse)
 async def chat_text2sql(request: ChatText2SQLRequest):
     """
     Convert natural language to SQL with conversation context
@@ -83,15 +92,15 @@ async def chat_text2sql(request: ChatText2SQLRequest):
     try:
         # Generate SQL with chat context
         sql_result = chat_service.generate_sql_with_context(
-            request.query, 
+            request.query,
             request.session_id
         )
-        
+
         # Execute if requested
         execution_result = None
         if request.execute:
             execution_result = chat_service.execute_query(sql_result["sql"])
-        
+
         return Text2SQLResponse(
             sql=sql_result["sql"],
             method=sql_result["method"],
@@ -100,11 +109,11 @@ async def chat_text2sql(request: ChatText2SQLRequest):
             context_used=sql_result.get("context_used"),
             execution_result=execution_result
         )
-    
+
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@router.post("/text2sql/agentic", response_model=Text2SQLResponse)
+@router.post("/agentic", response_model=Text2SQLResponse)
 async def agentic_text2sql(request: AgenticText2SQLRequest):
     """
     Convert natural language to SQL using agentic approach with tools
@@ -115,7 +124,7 @@ async def agentic_text2sql(request: AgenticText2SQLRequest):
             request.query,
             max_iterations=request.max_iterations
         )
-        
+
         return Text2SQLResponse(
             sql=sql_result["sql"],
             method=sql_result["method"],
@@ -124,7 +133,7 @@ async def agentic_text2sql(request: AgenticText2SQLRequest):
             execution_result=sql_result.get("execution_result"),
             validation_result=sql_result.get("validation_result")
         )
-    
+
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

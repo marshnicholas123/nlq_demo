@@ -12,7 +12,12 @@
       "WebFetch(domain:arize.com)",
       "WebSearch",
       "Bash(curl https://bootstrap.pypa.io/get-pip.py -o get-pip.py)",
-      "Bash(curl -s http://127.0.0.1:6006/healthz)"
+      "Bash(curl -s http://127.0.0.1:6006/healthz)",
+      "Bash(sqlite3:*)",
+      "Bash(for table in countries nuclear_power_plant_status_types nuclear_power_plants nuclear_reactor_types)",
+      "Bash(do echo \"=== $table ===\")",
+      "Bash(done)",
+      "Bash(python3:*)"
     ],
     "deny": [],
     "ask": []

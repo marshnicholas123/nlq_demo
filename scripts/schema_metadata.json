@@ -1,0 +1,42 @@
+[
+  {
+    "table_name": "countries",
+    "description": "The countries table serves as a master reference for all recognized countries in the dataset. Each record includes a unique identifier and the official country name. It acts as a lookup table for linking other entities, such as nuclear power plants, through standardized country codes or IDs. This ensures consistent geographic classification and enables aggregation of statistics by nation or region.",
+    "content": "# countries\n\n**Table**: countries\n\n**Schema**:\n\n| Column Name | Data Type | Nullable | Description |\n|------------|-----------|----------|-------------|\n| id | VARCHAR(255) | YES | Unique identifier for countries |\n| name | VARCHAR(255) | YES | Name/title of the countrie |\n",
+    "metadata": {
+      "type": "schema",
+      "table": "countries",
+      "extracted_at": "2025-10-05T19:05:41.565172"
+    }
+  },
+  {
+    "table_name": "nuclear_power_plant_status_types",
+    "description": "The nuclear_power_plant_status_types table defines the various lifecycle states that a nuclear power plant can be in—such as under construction, operational, or decommissioned. Each record is uniquely identified by an ID and provides a textual classification for that status type. It standardizes the representation of plant status across datasets and supports clean foreign key relationships with the main nuclear_power_plants table.",
+    "content": "# nuclear_power_plant_status_types\n\n**Table**: nuclear_power_plant_status_types\n\n**Schema**:\n\n| Column Name | Data Type | Nullable | Description |\n|------------|-----------|----------|-------------|\n| Type | VARCHAR(255) | YES | Type/category classification |\n| Id | INT | YES | Unique identifier for nuclear power plant status types |\n",
+    "metadata": {
+      "type": "schema",
+      "table": "nuclear_power_plant_status_types",
+      "extracted_at": "2025-10-05T19:05:41.565178"
+    }
+  },
+  {
+    "table_name": "nuclear_power_plants",
+    "description": "The nuclear_power_plants table captures detailed information about individual nuclear power plants worldwide. It includes identifying information such as name, location coordinates, country, and capacity. It also tracks construction and operational timelines, reactor type and model, and status via foreign keys to supporting reference tables. This table forms the core of the dataset, enabling analysis of operational capacity, geographic distribution, and plant lifecycle metrics.",
+    "content": "# nuclear_power_plants\n\n**Table**: nuclear_power_plants\n\n**Schema**:\n\n| Column Name | Data Type | Nullable | Description |\n|------------|-----------|----------|-------------|\n| Name | VARCHAR(255) | YES | Name/title of the nuclear power plant |\n| Latitude | INT | YES | Geographic latitude coordinate |\n| Longitude | INT | YES | Geographic longitude coordinate |\n| CountryCode | VARCHAR(255) | YES | ISO 3166-1 alpha-2 country code |\n| StatusId | INT | YES | Current lifecycle status (FK to nuclear_power_plant_status_type) |\n| ReactorTypeId | INT | YES | Technology classification (FK to nuclear_reactor_type) |\n| ReactorModel | VARCHAR(255) | YES | Specific reactor model/variant |\n| ConstructionStartAt | DATETIME | YES | Date when construction began |\n| OperationalFrom | DATETIME | YES | Date when plant began commercial operation |\n| OperationalTo | DATETIME | YES | Date when plant ceased operation (NULL if still operating) |\n| Capacity | INT | YES | Net electrical capacity in megawatts (MW) |\n| Source | VARCHAR(255) | YES | Data source reference |\n| LastUpdatedAt | DATETIME | YES | Timestamp of last data update |\n| Id | INT | YES | Unique identifier for nuclear power plants |\n",
+    "metadata": {
+      "type": "schema",
+      "table": "nuclear_power_plants",
+      "extracted_at": "2025-10-05T19:05:41.565181"
+    }
+  },
+  {
+    "table_name": "nuclear_reactor_types",
+    "description": "The nuclear_reactor_types table lists the main categories of reactor technologies used in nuclear power generation, such as pressurized water reactors or boiling water reactors. Each entry provides a type label, a descriptive summary, and a unique identifier. It supports technological classification of plants in the nuclear_power_plants table, enabling comparative analysis of reactor designs, safety profiles, and adoption trends across different countries.",
+    "content": "# nuclear_reactor_types\n\n**Table**: nuclear_reactor_types\n\n**Schema**:\n\n| Column Name | Data Type | Nullable | Description |\n|------------|-----------|----------|-------------|\n| Type | VARCHAR(255) | YES | Type/category classification |\n| Description | VARCHAR(255) | YES | Detailed text description |\n| Id | INT | YES | Unique identifier for nuclear reactor types |\n",
+    "metadata": {
+      "type": "schema",
+      "table": "nuclear_reactor_types",
+      "extracted_at": "2025-10-05T19:05:41.565184"
+    }
+  }
+]
