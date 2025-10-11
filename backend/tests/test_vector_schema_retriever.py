@@ -30,7 +30,7 @@ def test_basic_retrieval():
     print("\n=== Testing Basic Retrieval ===")
 
     test_queries = [
-        ("How many plants are there in Mexico?", 3),
+        ("How many power plants are there in Mexico?", 4),
         ("reactor types and specifications", 2),
         ("power plant operational status", 3),
         ("nuclear facilities by country", 3),
