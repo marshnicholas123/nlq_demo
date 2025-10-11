@@ -19,12 +19,12 @@ class ChatText2SQLService(AdvancedText2SQLService):
         user_query: str,
         session_id: str
     ) -> Dict:
-        """Generate SQL with conversation context"""
+        """Generate SQL with conversation context using hybrid retrieval"""
 
         with tracer.start_as_current_span("chat_text2sql.generate_sql_with_context") as span:
             span.set_attribute("user_query", user_query)
             span.set_attribute("session_id", session_id)
-            span.set_attribute("method", "chat")
+            span.set_attribute("method", "chat_hybrid")
 
             # 1. Get or create chat history
             chat_history = self._get_chat_history(session_id)
@@ -37,64 +37,109 @@ class ChatText2SQLService(AdvancedText2SQLService):
             if is_followup:
                 span.set_attribute("resolved_query", resolved_query)
 
-            # 3. Retrieve metadata context (BM25)
-            relevant_context = self.retrieve_relevant_context(resolved_query, top_k=5)
+            # 3. Retrieve relevant table schemas using vector embeddings (top 2)
+            vector_docs = self.vector_retriever.retrieve(resolved_query, top_k=2)
+            span.set_attribute("vector_docs_count", len(vector_docs))
 
-            # 4. Get schema and sample data
-            schema_context = self.get_schema_context()
-            tables_mentioned = self._identify_relevant_tables(resolved_query, relevant_context)
-            sample_data = ""
-            for table in tables_mentioned:
-                sample_data += self.get_sample_data(table, limit=3)
+            # 4. Retrieve relevant table schemas using BM25 (top 3)
+            bm25_docs = self.retrieve_table_schemas(resolved_query, top_k=3)
+            span.set_attribute("bm25_docs_count", len(bm25_docs))
 
-            # 5. Build metadata context
-            metadata_context = "\n\n".join([
-                f"Context from {doc['table']} - {doc['section']}:\n{doc['content']}"
-                for doc in relevant_context
+            # 5. Combine and deduplicate by table name
+            combined_docs = []
+            seen_tables = set()
+
+            # Add BM25 results first (prioritize keyword matches)
+            for doc in bm25_docs:
+                table_name = doc.get('table', '').lower()
+                if table_name and table_name not in seen_tables:
+                    combined_docs.append(doc)
+                    seen_tables.add(table_name)
+
+            # Add vector results for semantic matching
+            for doc in vector_docs:
+                # Vector retriever uses 'table_name' key instead of 'table'
+                table_name = doc.get('table_name', '').lower()
+                if table_name and table_name not in seen_tables:
+                    combined_docs.append(doc)
+                    seen_tables.add(table_name)
+
+            # 6. Select top 3 from combined results
+            top_3_docs = combined_docs[:3]
+            span.set_attribute("final_docs_count", len(top_3_docs))
+
+            # Extract table names (handle both 'table' and 'table_name' keys)
+            final_tables = [doc.get('table') or doc.get('table_name', '') for doc in top_3_docs]
+            span.set_attribute("final_tables", final_tables)
+
+            # 7. Build schema context from top 3 documents
+            schema_context = "\n\n".join([
+                f"{doc['content']}"
+                for doc in top_3_docs
             ])
 
-            # 6. Build conversation context
+            # 8. Extract table names from top 3 schema documents for sample data
+            tables_mentioned = []
+            for doc in top_3_docs:
+                table_name = (doc.get('table') or doc.get('table_name', '')).lower()
+                if table_name and table_name not in tables_mentioned:
+                    tables_mentioned.append(table_name)
+            span.set_attribute("tables_mentioned", tables_mentioned)
+
+            # 9. Get sample data for only the top 3 tables using BM25 retrieval
+            sample_data = self.get_sample_data(resolved_query, tables_mentioned, limit=4)
+
+            # 10. Metadata context (empty for now)
+            metadata_context = ""
+
+            # 11. Build conversation context
             conversation_context = self._build_conversation_context(chat_history)
 
-            # 7. Enhanced prompt with chat history
-            system_prompt = """You are an expert SQL query generator with conversation memory.
+            # 12. Enhanced prompt with chat history
+            system_prompt = """You are an expert SQL query generator specialized in nuclear power plant databases with conversation memory.
 
-You can handle follow-up questions that reference previous queries. Use the conversation
-history to understand context and resolve ambiguous references.
+Generate valid MySQL queries based on the provided schema, sample data, and conversation history.
 
 Rules:
 1. Return ONLY the SQL query, no explanations
-2. Consider previous queries when interpreting follow-ups
-3. If user asks "show me more details", expand on the previous query
-4. If user says "for China" or "in the US", add that filter to previous context
-5. Use proper JOIN syntax and business rules from context
-6. Apply StatusId = 3 filter for "operational" or "current" queries"""
+2. Use proper JOIN syntax when accessing related tables
+3. Apply business rules from the context (e.g., StatusId = 3 for operational plants)
+4. Use appropriate aggregations (SUM, COUNT, AVG) when calculating metrics
+5. Always include table aliases for clarity
+6. Filter NULL values when appropriate
+7. Limit results unless asking for aggregates
+8. Consider previous queries when interpreting follow-up questions
+9. If user asks "show me more details", expand on the previous query
+10. If user adds filters like "for China" or "in the US", incorporate them appropriately"""
 
             user_prompt = f"""Database Schema:
 {schema_context}
 
 {sample_data}
 
-Business Context:
+Business Context and Best Practices:
 {metadata_context}
 
 {conversation_context}
 
 Current User Question: {user_query}
 
-Generate a SQL query to answer this question."""
+Generate a SQL query to answer this question accurately."""
 
             # Call Bedrock (automatically traced)
             sql_query = self.bedrock.invoke_model(
                 prompt=user_prompt,
-                system=system_prompt
+                system=system_prompt,
+                operation_type="sql_generation"
             )
 
             sql_query = self._extract_sql(sql_query)
 
             span.set_attribute("generated_sql", sql_query)
+            span.set_attribute("context_sections_used", [doc.get('section', 'schema') for doc in top_3_docs])
+            span.set_attribute("retrieval_method", "chat_hybrid_vector_bm25")
 
-            # 8. Store in history before executing
+            # 13. Store in history before executing
             self._add_to_history(session_id, {
                 "user_query": user_query,
                 "resolved_query": resolved_query,
@@ -104,10 +149,15 @@ Generate a SQL query to answer this question."""
 
             return {
                 "sql": sql_query,
-                "method": "chat",
+                "method": "chat_hybrid",
                 "session_id": session_id,
                 "resolved_query": resolved_query if resolved_query != user_query else None,
-                "context_used": [doc['section'] for doc in relevant_context]
+                "context_used": [doc.get('section', 'schema') for doc in top_3_docs],
+                "retrieval_stats": {
+                    "vector_results": len(vector_docs),
+                    "bm25_results": len(bm25_docs),
+                    "final_top_k": len(top_3_docs)
+                }
             }
     
     def _get_chat_history(self, session_id: str) -> List[Dict]:
@@ -157,13 +207,13 @@ Generate a SQL query to answer this question."""
         """Build conversation context string"""
         if not history:
             return "Conversation History: None (this is the first question)"
-        
+
         context = "Conversation History:\n"
-        for i, entry in enumerate(history[-5:], 1):  # Last 5 entries
+        for i, entry in enumerate(history[-3:], 1):  # Last 3 entries
             context += f"\nTurn {i}:\n"
             context += f"  User asked: {entry['user_query']}\n"
-            context += f"  Generated SQL: {entry['sql'][:200]}{'...' if len(entry['sql']) > 200 else ''}\n"
-        
+            context += f"  Generated SQL: {entry['sql'][:100]}{'...' if len(entry['sql']) > 100 else ''}\n"
+
         return context
     
     def clear_history(self, session_id: str):

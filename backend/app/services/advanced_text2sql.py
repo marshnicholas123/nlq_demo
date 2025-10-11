@@ -2,7 +2,7 @@ import re
 from typing import List, Dict
 from app.services.simple_text2sql import SimpleText2SQLService
 from app.services.bedrock_client import bedrock_client
-from app.services.retrievers import schema_retriever, sample_data_retriever, vector_schema_retriever
+from app.services.retrievers import schema_retriever, sample_data_retriever, vector_schema_retriever, business_rules_retriever
 from app.database import get_db_connection
 from opentelemetry import trace
 
@@ -22,6 +22,7 @@ class AdvancedText2SQLService(SimpleText2SQLService):
         self.retriever = schema_retriever
         self.sample_retriever = sample_data_retriever
         self.vector_retriever = vector_schema_retriever
+        self.business_rules_retriever = business_rules_retriever
 
     def retrieve_table_schemas(self, query: str, top_k: int = 3) -> List[Dict]:
         """Retrieve relevant table schemas using BM25"""
@@ -146,8 +147,19 @@ class AdvancedText2SQLService(SimpleText2SQLService):
             # 7. Get sample data for only the top 3 tables using BM25 retrieval
             sample_data = self.get_sample_data(user_query, tables_mentioned, limit=4)
 
-            # 5. Metadata context (empty for now)
-            metadata_context = ""
+            # 8. Get business rules and metadata context using hybrid retrieval
+            try:
+                business_rules_results = self.business_rules_retriever.retrieve(
+                    query=user_query,
+                    method='hybrid',
+                    top_k=3
+                )
+                metadata_context = self.business_rules_retriever.format_context(business_rules_results)
+                span.set_attribute("business_rules_count", len(business_rules_results))
+            except Exception as e:
+                span.record_exception(e)
+                metadata_context = ""
+                span.set_attribute("business_rules_error", str(e))
 
             # 6. Build enhanced prompt
             system_prompt = """You are an expert SQL query generator specialized in nuclear power plant databases.
