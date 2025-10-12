@@ -227,8 +227,12 @@ Please provide a natural language answer to the user's question based on these r
                 return response_text
 
             except Exception as e:
-                # Return None if parser LLM fails, don't block the request
+                # Log error and re-raise to handle upstream
                 span.record_exception(e)
                 span.set_attribute("error", True)
-                print(f"Error in parse_results_to_text: {str(e)}")
-                return None
+                error_msg = f"Error in parse_results_to_text: {str(e)}"
+                print(error_msg)
+                # Return a basic fallback response instead of None
+                if execution_result.get("data"):
+                    return f"Query executed successfully. Results: {execution_result['data']}"
+                return f"Query executed but could not generate natural language response: {str(e)}"

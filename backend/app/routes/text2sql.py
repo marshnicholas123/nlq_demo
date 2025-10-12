@@ -121,19 +121,59 @@ async def agentic_text2sql(request: AgenticText2SQLRequest):
     try:
         # Generate SQL using agent
         sql_result = agentic_service.generate_sql_with_agent(
-            request.query,
+            user_query=request.query,
+            session_id=request.session_id,
             max_iterations=request.max_iterations
         )
+
+        # Handle clarification requests
+        if sql_result.get("needs_clarification"):
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "needs_clarification": True,
+                    "questions": sql_result.get("questions", [])
+                }
+            )
+
+        if not sql_result.get("success"):
+            raise HTTPException(status_code=500, detail=sql_result.get("error", "Unknown error"))
+
+        # Get execution result and parsed response from workflow
+        execution_result = sql_result.get("execution_result")
+        parsed_response = sql_result.get("parsed_response")
+
+        # Execute if requested but not already executed by agent
+        if request.execute and not execution_result:
+            execution_result = agentic_service.execute_query(sql_result["sql"])
+
+            # Parse results if execution succeeded but not already parsed
+            if execution_result and execution_result.get("success") and not parsed_response:
+                try:
+                    parsed_response = agentic_service.parse_results_to_text(
+                        user_query=request.query,
+                        sql_query=sql_result["sql"],
+                        execution_result=execution_result
+                    )
+                except Exception as e:
+                    print(f"Warning: Failed to parse results to text: {str(e)}")
+                    parsed_response = None
 
         return Text2SQLResponse(
             sql=sql_result["sql"],
             method=sql_result["method"],
+            session_id=sql_result.get("session_id"),
+            resolved_query=sql_result.get("resolved_query"),
             iterations=sql_result.get("iterations"),
             tool_calls=sql_result.get("tool_calls"),
-            execution_result=sql_result.get("execution_result"),
-            validation_result=sql_result.get("validation_result")
+            execution_result=execution_result,
+            validation_result=sql_result.get("validation_result"),
+            agentic_context=sql_result.get("context_used"),
+            parsed_response=parsed_response
         )
 
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
