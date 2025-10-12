@@ -98,8 +98,16 @@ async def chat_text2sql(request: ChatText2SQLRequest):
 
         # Execute if requested
         execution_result = None
+        parsed_response = None
         if request.execute:
             execution_result = chat_service.execute_query(sql_result["sql"])
+
+            # Generate natural language response using parser LLM
+            parsed_response = chat_service.parse_results_to_text(
+                user_query=request.query,
+                sql_query=sql_result["sql"],
+                execution_result=execution_result
+            )
 
         return Text2SQLResponse(
             sql=sql_result["sql"],
@@ -107,7 +115,8 @@ async def chat_text2sql(request: ChatText2SQLRequest):
             session_id=sql_result.get("session_id"),
             resolved_query=sql_result.get("resolved_query"),
             context_used=sql_result.get("context_used"),
-            execution_result=execution_result
+            execution_result=execution_result,
+            parsed_response=parsed_response
         )
 
     except Exception as e:

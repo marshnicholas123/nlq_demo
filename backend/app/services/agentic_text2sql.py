@@ -525,73 +525,42 @@ Generate a SQL query to answer this question accurately."""
                 }
 
     def _reflect_node(self, state: AgentState) -> Dict:
-        """Reflect on generated SQL quality"""
+        """Reflect on generated SQL - only replan if there are critical errors"""
         with tracer.start_as_current_span("agentic_text2sql.reflect") as span:
-            # Add 10 second sleep to avoid Bedrock throttling
-            time.sleep(10)
-            span.set_attribute("throttle_delay_seconds", 10)
-
             sql = state["sql_query"]
             execution_result = state.get("execution_result")
             validation_result = state.get("validation_result")
 
             span.set_attribute("sql", sql)
 
-            # Build reflection prompt
-            reflection_prompt = f"""Review this generated SQL query for quality and correctness:
+            # Simple reflection: only regenerate if there's a critical error
+            should_refine = False
+            issues = []
 
-User Query: {state["user_query"]}
-Generated SQL: {sql}
+            # Check for execution errors
+            if execution_result and not execution_result.get("success"):
+                error_msg = execution_result.get("error", "")
+                # Only regenerate for syntax errors, not data issues
+                if any(err in error_msg.lower() for err in ["syntax", "parse", "invalid sql", "unknown column", "unknown table"]):
+                    should_refine = True
+                    issues.append(f"SQL execution error: {error_msg}")
 
-Execution Result: {json.dumps(execution_result) if execution_result else "Not executed"}
-Validation Result: {json.dumps(validation_result) if validation_result else "Not validated"}
+            # Check for empty results (potential issue)
+            if validation_result and not validation_result.get("has_results"):
+                issues.append("Query returned no results")
+                # Don't regenerate for empty results - might be correct
 
-Schema Context Available: {bool(state["schema"])}
-Business Rules Applied: {len(state["metadata_context"])} rules
+            reflection = {
+                "is_acceptable": not should_refine,
+                "should_refine": should_refine,
+                "issues": issues
+            }
 
-Evaluate:
-1. Does the SQL correctly answer the user's question?
-2. Are there syntax errors?
-3. Are appropriate JOINs used?
-4. Are business rules properly applied?
-5. Is the query efficient?
-6. Are there any potential issues?
+            span.set_attribute("is_acceptable", reflection["is_acceptable"])
+            span.set_attribute("should_refine", should_refine)
+            span.set_attribute("issues_count", len(issues))
 
-Respond in JSON:
-{{
-    "is_acceptable": true/false,
-    "confidence": 0.0-1.0,
-    "issues": ["issue 1", "issue 2"],
-    "suggested_improvements": "description",
-    "should_refine": true/false
-}}
-
-Return ONLY the JSON."""
-
-            try:
-                response = self.bedrock.invoke_model(
-                    prompt=reflection_prompt,
-                    system="You are a SQL quality reviewer. Evaluate queries objectively.",
-                    operation_type="sql_reflection"
-                )
-
-                reflection = json.loads(response)
-
-                span.set_attribute("is_acceptable", reflection.get("is_acceptable", True))
-                span.set_attribute("confidence", reflection.get("confidence", 1.0))
-                span.set_attribute("should_refine", reflection.get("should_refine", False))
-
-                return {"reflection_result": reflection}
-
-            except Exception as e:
-                span.record_exception(e)
-                # If reflection fails, accept the SQL
-                return {
-                    "reflection_result": {
-                        "is_acceptable": True,
-                        "should_refine": False
-                    }
-                }
+            return {"reflection_result": reflection}
 
     def _complete_node(self, state: AgentState) -> Dict:
         """Mark workflow as complete"""
