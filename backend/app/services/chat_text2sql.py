@@ -89,16 +89,27 @@ class ChatText2SQLService(AdvancedText2SQLService):
             # 9. Get sample data for only the top 3 tables using BM25 retrieval
             sample_data = self.get_sample_data(resolved_query, tables_mentioned, limit=4)
 
-            # 10. Metadata context (empty for now)
-            metadata_context = ""
+            # 10. Get business rules and metadata context using hybrid retrieval
+            try:
+                business_rules_results = self.business_rules_retriever.retrieve(
+                    query=resolved_query,
+                    method='hybrid',
+                    top_k=3
+                )
+                metadata_context = self.business_rules_retriever.format_context(business_rules_results)
+                span.set_attribute("business_rules_count", len(business_rules_results))
+            except Exception as e:
+                span.record_exception(e)
+                metadata_context = ""
+                span.set_attribute("business_rules_error", str(e))
 
             # 11. Build conversation context
             conversation_context = self._build_conversation_context(chat_history)
 
             # 12. Enhanced prompt with chat history
-            system_prompt = """You are an expert SQL query generator specialized in nuclear power plant databases with conversation memory.
+            system_prompt = """You are an expert SQL query generator specialized in nuclear power plant databases.
 
-Generate valid MySQL queries based on the provided schema, sample data, and conversation history.
+Generate valid MySQL queries based on the provided schema, sample data, and business context.
 
 Rules:
 1. Return ONLY the SQL query, no explanations
@@ -107,10 +118,7 @@ Rules:
 4. Use appropriate aggregations (SUM, COUNT, AVG) when calculating metrics
 5. Always include table aliases for clarity
 6. Filter NULL values when appropriate
-7. Limit results unless asking for aggregates
-8. Consider previous queries when interpreting follow-up questions
-9. If user asks "show me more details", expand on the previous query
-10. If user adds filters like "for China" or "in the US", incorporate them appropriately"""
+7. Limit results unless asking for aggregates"""
 
             user_prompt = f"""Database Schema:
 {schema_context}
@@ -122,7 +130,7 @@ Business Context and Best Practices:
 
 {conversation_context}
 
-Current User Question: {user_query}
+User Question: {user_query}
 
 Generate a SQL query to answer this question accurately."""
 
