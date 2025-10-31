@@ -162,11 +162,11 @@ cython_debug/
 # VS Code
 .vscode/
 
-# Database files
+# Database files (excluding nuclear_plants.db which is included in repo)
 *.db
+!nuclear_plants.db
 *.sqlite
 *.sqlite3
-nuclear_plants.db
 
 # Environment variables and configuration files
 .env

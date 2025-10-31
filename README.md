@@ -39,7 +39,8 @@ text2sql_ui/
 │   │   ├── types/         # TypeScript types
 │   │   └── utils/         # Utility functions
 ├── scripts/               # Data loading and indexing scripts
-└── data/                  # Sample data and schemas
+├── data/                  # Sample data and schemas
+└── nuclear_plants.db      # Pre-populated SQLite database (140KB)
 ```
 
 ## Prerequisites
@@ -75,11 +76,14 @@ cp backend/.env.example backend/.env
 
 ### 3. Database Setup
 
+The repository includes a pre-populated SQLite database (`nuclear_plants.db`) with sample nuclear power plant data, so you can start using the application immediately.
+
+**Optional: Rebuild the database**
 ```bash
-# Load sample data (nuclear power plant database)
+# If you want to regenerate the database from source data
 python scripts/load_data.py
 
-# Build search indices
+# Build search indices for advanced retrieval
 python scripts/build_bm25_index.py
 python scripts/build_sample_data_index.py
 ```
