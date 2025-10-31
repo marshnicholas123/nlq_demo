@@ -82,11 +82,13 @@ def main():
         # Clean and prepare plants data
         plants_df = plants_df.replace('', None)  # Replace empty strings with None
         
-        # Handle date columns
+        # Handle date columns - convert to proper date format for SQLite
         date_columns = ['ConstructionStartAt', 'OperationalFrom', 'OperationalTo', 'LastUpdatedAt']
         for col in date_columns:
             if col in plants_df.columns:
-                plants_df[col] = pd.to_datetime(plants_df[col], errors='coerce')
+                plants_df[col] = pd.to_datetime(plants_df[col], errors='coerce', utc=True)
+                # Convert to ISO format string (YYYY-MM-DD) for proper SQLite date storage
+                plants_df[col] = plants_df[col].dt.strftime('%Y-%m-%d').replace('NaT', None)
         
         plants_df.to_sql('nuclear_power_plants', engine, if_exists='replace', index=False, method='multi')
         

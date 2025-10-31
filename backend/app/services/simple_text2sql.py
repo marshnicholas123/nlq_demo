@@ -62,7 +62,7 @@ class SimpleText2SQLService:
 
             schema_context = self.get_schema_context()
 
-            system_prompt = """You are an expert SQL query generator. Generate valid MySQL queries based on the provided schema and user question.
+            system_prompt = """You are an expert SQL query generator. Generate valid SQLite queries based on the provided schema and user question.
 
                             Rules:
                             1. Return ONLY the SQL query, no explanations

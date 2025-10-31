@@ -109,7 +109,7 @@ class ChatText2SQLService(AdvancedText2SQLService):
             # 12. Enhanced prompt with chat history
             system_prompt = """You are an expert SQL query generator specialized in nuclear power plant databases.
 
-Generate valid MySQL queries based on the provided schema, sample data, and business context.
+Generate valid SQLite queries based on the provided schema, sample data, and business context.
 
 Rules:
 1. Return ONLY the SQL query, no explanations

@@ -22,7 +22,8 @@
       "Read(//private/tmp/**)",
       "Bash(pkill:*)",
       "Bash(find:*)",
-      "Bash(chmod:*)"
+      "Bash(chmod:*)",
+      "Bash(npm install:*)"
     ],
     "deny": [],
     "ask": []
