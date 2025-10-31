@@ -1,6 +1,7 @@
 import { ServiceResult } from '@/types/text2sql';
 import { formatDuration, getServiceBadgeColor, formatTableValue } from '@/utils/formatting';
 import { useState } from 'react';
+import ReactMarkdown from 'react-markdown';
 
 interface ServiceResultCardProps {
   result: ServiceResult;
@@ -139,8 +140,8 @@ export default function ServiceResultCard({ result }: ServiceResultCardProps) {
             {result.parsed_response && (
               <div className="mt-4">
                 <h4 className="text-xs font-semibold text-gray-700 mb-2">Natural Language Response</h4>
-                <div className="bg-blue-50 border border-blue-200 rounded-md p-3">
-                  <p className="text-sm text-gray-800">{result.parsed_response}</p>
+                <div className="bg-blue-50 border border-blue-200 rounded-md p-3 prose prose-sm max-w-none prose-headings:text-gray-900 prose-p:text-gray-800 prose-strong:text-gray-900 prose-code:text-gray-900 prose-pre:bg-gray-900 prose-pre:text-gray-100">
+                  <ReactMarkdown>{result.parsed_response}</ReactMarkdown>
                 </div>
               </div>
             )}
