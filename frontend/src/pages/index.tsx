@@ -5,6 +5,7 @@ import SessionManager from '@/components/SessionManager';
 import ServiceToggle from '@/components/ServiceToggle';
 import QueryInput from '@/components/QueryInput';
 import ServiceResultCard from '@/components/ServiceResultCard';
+import SchemaViewer from '@/components/SchemaViewer';
 import { ServiceResult } from '@/types/text2sql';
 import { callService, SERVICES } from '@/api/text2sql';
 
@@ -16,6 +17,7 @@ export default function DemoComparison() {
   const [currentQuery, setCurrentQuery] = useState<string>('');
   const [currentRunningService, setCurrentRunningService] = useState<string>('');
   const [completedCount, setCompletedCount] = useState(0);
+  const [activeTab, setActiveTab] = useState<'query' | 'schema'>('query');
 
   // Initialize session ID and select all services on mount
   useEffect(() => {
@@ -161,12 +163,41 @@ export default function DemoComparison() {
           {/* Main Content Area */}
           <main className="flex-1 overflow-y-auto">
             <div className="p-4 lg:p-6 max-w-7xl mx-auto">
-              {/* Query Input */}
-              <QueryInput
-                onSubmit={handleQuerySubmit}
-                isLoading={isLoading}
-                disabled={selectedServices.length === 0}
-              />
+              {/* Tab Navigation */}
+              <div className="mb-6 border-b border-gray-200">
+                <nav className="-mb-px flex space-x-8">
+                  <button
+                    onClick={() => setActiveTab('query')}
+                    className={`py-4 px-1 border-b-2 font-medium text-sm transition-colors ${
+                      activeTab === 'query'
+                        ? 'border-primary-600 text-primary-600'
+                        : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                    }`}
+                  >
+                    Query & Compare
+                  </button>
+                  <button
+                    onClick={() => setActiveTab('schema')}
+                    className={`py-4 px-1 border-b-2 font-medium text-sm transition-colors ${
+                      activeTab === 'schema'
+                        ? 'border-primary-600 text-primary-600'
+                        : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                    }`}
+                  >
+                    Database Schema
+                  </button>
+                </nav>
+              </div>
+
+              {/* Query Tab */}
+              {activeTab === 'query' && (
+                <>
+                  {/* Query Input */}
+                  <QueryInput
+                    onSubmit={handleQuerySubmit}
+                    isLoading={isLoading}
+                    disabled={selectedServices.length === 0}
+                  />
 
               {/* Current Query Display */}
               {currentQuery && results.length > 0 && (
@@ -248,18 +279,23 @@ export default function DemoComparison() {
                 </div>
               )}
 
-              {/* Empty State */}
-              {results.length === 0 && !isLoading && (
-                <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-12 text-center">
-                  <div className="text-6xl mb-4">🔍</div>
-                  <h3 className="text-lg font-semibold text-gray-900 mb-2">
-                    No Results Yet
-                  </h3>
-                  <p className="text-sm text-gray-600">
-                    Select services and enter a query to see how different approaches compare
-                  </p>
-                </div>
+                  {/* Empty State */}
+                  {results.length === 0 && !isLoading && (
+                    <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-12 text-center">
+                      <div className="text-6xl mb-4">🔍</div>
+                      <h3 className="text-lg font-semibold text-gray-900 mb-2">
+                        No Results Yet
+                      </h3>
+                      <p className="text-sm text-gray-600">
+                        Select services and enter a query to see how different approaches compare
+                      </p>
+                    </div>
+                  )}
+                </>
               )}
+
+              {/* Schema Tab */}
+              {activeTab === 'schema' && <SchemaViewer />}
             </div>
           </main>
         </div>
